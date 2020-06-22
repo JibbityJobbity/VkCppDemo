@@ -41,6 +41,7 @@ protected:
 	vk::Format swapImageFormat;
 	vk::Extent2D swapExtent;
 	std::vector<vk::Image> swapChainImages;
+	std::vector<vk::UniqueFramebuffer> swapChainFrameBuffers;
 	std::vector<vk::UniqueImageView> swapImageViews;
 	vk::UniqueRenderPass renderPass;
 	vk::UniquePipelineLayout pipelineLayout;
@@ -51,6 +52,10 @@ protected:
 	};
 	vk::UniquePipelineCache pipelineCache;
 	vk::UniquePipeline graphicsPipeline;
+	vk::UniqueCommandPool commandPool;
+	std::vector<vk::UniqueCommandBuffer> commandBuffers;
+	vk::UniqueSemaphore imageAvailableSemaphore;
+	vk::UniqueSemaphore renderFinishedSemaphore;
 
 	bool vsync;
 	bool debugMessengerEnabled;

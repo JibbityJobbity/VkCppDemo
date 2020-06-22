@@ -95,7 +95,7 @@ void Renderer::Initialize() {
 		debugMessenger = instance->createDebugUtilsMessengerEXTUnique(
 			vk::DebugUtilsMessengerCreateInfoEXT{ {},
 				vk::DebugUtilsMessageSeverityFlagBitsEXT::eError | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-					vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
+					vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo,
 				vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
 					vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
 				debugCallback }
@@ -194,6 +194,14 @@ void Renderer::Initialize() {
 		renderPassInfo.setSubpassCount(1);
 		renderPassInfo.setPSubpasses(&subpass);
 
+		vk::SubpassDependency dependency;
+		dependency.setSrcSubpass(VK_SUBPASS_EXTERNAL);
+		dependency.setDstSubpass(0);
+		dependency.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+		dependency.setSrcAccessMask((vk::AccessFlags)0);	// The tutorial I'm following has this set as 0 in the C struct???
+		renderPassInfo.setDependencyCount(1);
+		renderPassInfo.setPDependencies(&dependency);
+
 		renderPass = device->createRenderPassUnique(renderPassInfo);
 	}
 
@@ -291,6 +299,77 @@ void Renderer::Initialize() {
 
 		graphicsPipeline = device->createGraphicsPipelineUnique(*pipelineCache, pipelineInfo);
 	}
+
+	// Create framebuffers
+	{
+		swapChainFrameBuffers.resize(swapChainImages.size());
+		for (size_t i = 0; i < swapChainImages.size(); i++) {
+			vk::ImageView attachments[] = {
+				*swapImageViews[i]
+			};
+
+			vk::FramebufferCreateInfo framebufferInfo;
+			framebufferInfo.setAttachmentCount(1);
+			framebufferInfo.setPAttachments(attachments);
+			framebufferInfo.setRenderPass(*renderPass);
+			framebufferInfo.setWidth(swapExtent.width);
+			framebufferInfo.setHeight(swapExtent.height);
+			framebufferInfo.setLayers(1);
+
+			swapChainFrameBuffers[i] = device->createFramebufferUnique(framebufferInfo);
+		}
+	}
+
+	// Set up semaphores
+	{
+		vk::SemaphoreCreateInfo semaphoreInfo;
+
+		imageAvailableSemaphore = device->createSemaphoreUnique(semaphoreInfo);
+		renderFinishedSemaphore = device->createSemaphoreUnique(semaphoreInfo);
+	}
+
+	// Set up command buffer
+	{
+		vk::CommandPoolCreateInfo poolInfo;
+		poolInfo.setQueueFamilyIndex(queueIndices[0]);
+		commandPool = device->createCommandPoolUnique(poolInfo);
+
+		commandBuffers.resize(swapChainFrameBuffers.size());
+
+		vk::CommandBufferAllocateInfo allocInfo;
+		allocInfo.setCommandBufferCount((uint32_t)commandBuffers.size());
+		allocInfo.setLevel(vk::CommandBufferLevel::ePrimary);
+		allocInfo.setCommandPool(*commandPool);
+
+		commandBuffers = device->allocateCommandBuffersUnique(allocInfo);
+		
+		for (size_t i = 0; i < commandBuffers.size(); i++) {
+			vk::CommandBufferBeginInfo beginInfo;
+			auto& c = commandBuffers[i];
+
+			c->begin(beginInfo);
+
+			vk::RenderPassBeginInfo renderPassInfo;
+			renderPassInfo.setRenderPass(*renderPass);
+			renderPassInfo.setFramebuffer(*swapChainFrameBuffers[i]);
+			renderPassInfo.setRenderArea({
+				{0, 0},
+				swapExtent
+			});
+			vk::ClearValue value;
+			value.setColor(std::array<float, 4>{ 0.0, 0.0, 0.0, 1.0 });
+			//value.setDepthStencil(0.0f);
+			renderPassInfo.setClearValueCount(1);
+			renderPassInfo.setPClearValues(&value);
+
+			c->beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+			c->bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+			c->draw(3, 1, 0, 0);
+
+			c->endRenderPass();
+			c->end();
+		}
+	}
 }
 
 void Renderer::constructSwapChain() {
@@ -379,6 +458,39 @@ void Renderer::constructSwapChain() {
 
 void Renderer::Draw() {
 	while (!glfwWindowShouldClose(m_window.window)) {
+		uint32_t imageIndex;
+		device->acquireNextImageKHR(*swapchain, UINT64_MAX, *imageAvailableSemaphore, nullptr, &imageIndex);
+
+		vk::SubmitInfo submitInfo;
+		vk::Semaphore waitSemaphores[] = {
+			*imageAvailableSemaphore
+		};
+		vk::PipelineStageFlags waitStages[] = {
+			vk::PipelineStageFlagBits::eColorAttachmentOutput
+		};
+		submitInfo.setPWaitSemaphores(waitSemaphores);
+		submitInfo.setWaitSemaphoreCount(1);
+		submitInfo.setPWaitDstStageMask(waitStages);
+		submitInfo.setCommandBufferCount(1);
+		submitInfo.setPCommandBuffers(&*commandBuffers[imageIndex]);
+
+		vk::Semaphore signalSemaphores[] = { *renderFinishedSemaphore };
+		submitInfo.setSignalSemaphoreCount(1);
+		submitInfo.setPSignalSemaphores(signalSemaphores);
+
+		graphicsQueue.submit(submitInfo, nullptr);
+		
+
+		vk::PresentInfoKHR presentInfo;
+		presentInfo.setWaitSemaphoreCount(1);
+		presentInfo.setPWaitSemaphores(signalSemaphores);
+		vk::SwapchainKHR swapChains[] = { *swapchain };
+		presentInfo.setSwapchainCount(1);
+		presentInfo.setPSwapchains(swapChains);
+		presentInfo.setPImageIndices(&imageIndex);
+		presentInfo.setPResults(nullptr);
+
+		presentQueue.presentKHR(presentInfo);
 		glfwPollEvents();
 	}
 }
